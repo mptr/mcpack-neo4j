@@ -1,0 +1,13 @@
+{
+    "configurations": [
+        {
+            "type": "bun",
+            "internalConsoleOptions": "openOnSessionStart",
+            "request": "launch",
+            "name": "Main",
+            "program": "src/main.ts",
+            "noDebug": true,
+            "watchMode": false
+        }
+    ]
+}
