@@ -1,16 +1,18 @@
 {
-    "scripts": {
-        "main": "bun src/main.ts"
-    },
-    "main": "src/main.ts",
-    "dependencies": {
-        "neo4j-driver": "^5.17.0",
-        "rxjs": "^7.8.1"
-    },
-    "devDependencies": {
-        "bun-types": "latest"
-    },
-    "peerDependencies": {
-        "typescript": "^5.0.0"
-    }
+  "scripts": {
+    "main": "bun src/main.ts"
+  },
+  "main": "src/main.ts",
+  "dependencies": {
+    "multi-progress-bars": "^5.0.3",
+    "neo4j-driver": "^5.17.0",
+    "prettier": "^3.2.5",
+    "rxjs": "^7.8.1"
+  },
+  "devDependencies": {
+    "bun-types": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  }
 }

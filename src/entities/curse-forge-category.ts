@@ -1,87 +1,99 @@
 import {
-	AsyncSubject,
 	Observable,
-	endWith,
+	UnaryFunction,
 	from,
-	isEmpty,
-	last,
 	map,
 	mergeMap,
-	of,
 	pipe,
+	retry,
+	tap,
 } from "rxjs";
 import { BaseEntity } from "./base";
-import { DbConnection } from "../main";
+import { Query } from "../db";
+import { fetchRateLimited } from "../util";
 
-export class CurseForgeCategory extends BaseEntity {
+type ICategorizable = {
+	CYPHER_LABEL: string;
+	id: number;
+	slug: string; // mc-mods/<mod-slug> or modpacks/<pack-slug> or texture-packs/<tp-slug>
+};
+
+export class CurseForgeCategory extends BaseEntity<ICategorizable> {
+	static override get uniqueConstraints() {
+		return super.uniqueConstraints.concat([
+			[`c:${this.CYPHER_LABEL}`, "(c.id, c.slug)"],
+		]);
+	}
+
 	name: string;
 	slug: string;
 	isClass: boolean;
 	classId: number | null;
 	parentCategoryId: number | null;
 
-	// override saveRelatedTo(): Observable<this> {
-	// 	return DbConnection.run(
-	// 		`MATCH (m:Mod { id: $parentId })
-	// 		MERGE (c:Category { id: $id })
-	// 		SET c += $category
-	// 		MERGE (m)-[:BELONGS_TO]->(c)`,
-	// 		this
-	// 	).pipe(endWith(this), last()) as Observable<this>;
-	// }
-
-	override saveRelatedTo() {
-		return DbConnection.run(
-			`MATCH (p:Pack { id: $parentId })
-			MERGE (m:Mod { id: $id })
-			MERGE (p)-[:CONTAINS]->(m)`,
-			this
-		).pipe(endWith(this), last()) as Observable<this>;
+	constructor(d: Record<string, unknown>) {
+		super(d);
+		Object.assign(this, d);
 	}
 
-	override save() {
-		const partial: Partial<this> = { ...this };
-
-		delete partial.categoryClass;
-
-		return DbConnection.run(
-			`MERGE (m:Mod { id: $id })
-			SET m += $partial`,
-			{ entity: this, partial }
-		).pipe(endWith(this), last()) as Observable<this>;
+	override buildQuery(parent: ICategorizable) {
+		return new Query(
+			`MATCH (p:${parent.CYPHER_LABEL} { id: $parent.id })
+			MERGE (c:${this.CYPHER_LABEL} { id: $entity.id })
+			SET c += $entity
+			MERGE (p)-[:BELONGS_TO]->(c)`,
+			{ entity: this, parent },
+		);
 	}
 }
 
-type ICategorizable = {
-	id: number;
-	slug: string; // mc-mods/<mod-slug> or modpacks/<pack-slug> or texture-packs/<tp-slug>
-};
-
-export const getCategories = () =>
-	pipe(
+export const getCategories = <T extends ICategorizable>(
+	typedSlugExtractor: (item: T) => string,
+): UnaryFunction<
+	Observable<T>,
+	Observable<readonly [T, Record<string, unknown>]>
+> => {
+	return pipe(
 		map(
-			(item: ICategorizable) =>
-				[item.id, `https://www.curseforge.com/minecraft/${item.slug}`] as const
+			(item: T) =>
+				[
+					item,
+					`https://www.curseforge.com/minecraft/${typedSlugExtractor(item)}`,
+				] as const,
 		),
-		mergeMap(([id, url]) =>
-			from(fetch(url).then(async (res) => [id, await res.text()] as const))
+		mergeMap(([item, url]) =>
+			from(
+				fetchRateLimited(url).then(
+					async (res) => [item, await res.text()] as const,
+				),
+			).pipe(retry({ count: 3, delay: 1000 })),
 		),
-		map(([id, txt]) => {
-			const result = txt
-				.split(`<script id="__NEXT_DATA__" type="application/json">`)[1]
-				.split(`</script>`)[0];
-			if (result === undefined) {
+		map(([item, txt]) => {
+			let data;
+			try {
+				const result = txt
+					.split(`<script id="__NEXT_DATA__" type="application/json">`)[1]
+					.split(`</script>`)[0];
+				if (result === undefined) {
+					console.error(txt);
+					throw new Error("Could not find __NEXT_DATA__");
+				}
+				data = JSON.parse(result);
+			} catch (e) {
 				console.error(txt);
-				throw new Error("Could not find __NEXT_DATA__");
+				console.error(item);
+				throw e;
 			}
-			const data = JSON.parse(result);
 			if (data.props?.pageProps?.project?.categories === undefined) {
 				console.error(data);
 				throw new Error("Could not find categories");
 			}
-			return new CurseForgeCategory(
-				data.props.pageProps.project.categories,
-				id
-			);
-		})
+
+			const cs: Record<string, unknown>[] =
+				data.props.pageProps.project.categories;
+
+			return cs.map((categoryData) => [item, categoryData] as const);
+		}),
+		mergeMap((x) => x),
 	);
+};

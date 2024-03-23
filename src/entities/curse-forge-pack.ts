@@ -1,18 +1,14 @@
-import {
-	from,
-	AsyncSubject,
-	Observable,
-	isEmpty,
-	of,
-	concat,
-	last,
-	endWith,
-} from "rxjs";
-import { DbConnection } from "../main";
 import { Query } from "../db";
 import { BaseEntity } from "./base";
 
 export class CurseForgePack extends BaseEntity {
+	static override get uniqueConstraints() {
+		return super.uniqueConstraints.concat([
+			[`p:${this.CYPHER_LABEL}`, "p.slug"],
+			[`a:${this.AUTHOR_CYPHER_LABEL}`, "a.id"],
+		]);
+	}
+
 	author: {
 		id: number;
 		name: string;
@@ -33,7 +29,6 @@ export class CurseForgePack extends BaseEntity {
 		isClass: boolean;
 		parentCategoryId: number;
 	}[];
-	static readonly PACK_CATEGORY_CYPHER_LABEL = "PackCategory";
 	class: {
 		id: number;
 		dateModified: string;
@@ -50,7 +45,6 @@ export class CurseForgePack extends BaseEntity {
 	creationDate: number;
 	downloads: number;
 	gameVersion: string;
-	static readonly GAME_VERSION_CYPHER_LABEL = "GameVersion";
 	name: string;
 	slug: string;
 	summary: string;
@@ -86,38 +80,19 @@ export class CurseForgePack extends BaseEntity {
 	}[];
 	isMainFileClientCompatible: boolean;
 
-	override save() {
-		const partial: Partial<this> = { ...this };
+	constructor(d: Record<string, unknown>) {
+		super(d);
+		Object.assign(this, d);
+	}
 
-		delete partial.author;
-		delete partial.categories;
-		delete partial.class;
-		delete partial.latestFileDetails;
-		delete partial.websiteRecentFiles;
-
-		delete partial.gameVersion;
-
-		const mainQuery: Query = [
+	override buildQuery() {
+		return new Query(
 			`MERGE (p:${CurseForgePack.CYPHER_LABEL} { id: $entity.id })
 			SET p += $partial
 			MERGE (a:${CurseForgePack.AUTHOR_CYPHER_LABEL} { id: $entity.author.id })
 			SET a += $entity.author
-			MERGE (p)-[:AUTHORED_BY]->(a)
-			MERGE (v:${CurseForgePack.GAME_VERSION_CYPHER_LABEL} { name: $entity.gameVersion })
-			MERGE (p)-[:SUPPORTS]->(v)`,
-			{ entity: this, partial },
-		];
-		console.log(this);
-		const categoryQueries: Query[] = this.categories.map((category) => [
-			`MATCH (p:${CurseForgePack.CYPHER_LABEL} { id: $entity.id })
-			MERGE (pc:${CurseForgePack.PACK_CATEGORY_CYPHER_LABEL} { id: $category.id })
-			SET pc += $category
-			MERGE (p)-[:BELONGS_TO]->(pc)`,
-			{ entity: this, category },
-		]);
-
-		return DbConnection.runAll(
-			concat(of(mainQuery), from(categoryQueries))
-		).pipe(endWith(this), last()) as Observable<this>;
+			MERGE (p)-[:AUTHORED_BY]->(a)`,
+			{ entity: this, partial: this.primitiveThis },
+		);
 	}
 }

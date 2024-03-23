@@ -1,90 +1,46 @@
-import {
-	AsyncSubject,
-	Observable,
-	OperatorFunction,
-	endWith,
-	isEmpty,
-	last,
-	map,
-	mergeMap,
-	of,
-	pipe,
-	take,
-} from "rxjs";
-import { filterAsync } from "../util";
+import { from } from "rxjs";
 import { DbConnection } from "../main";
+import { final } from "../util";
+import { Query } from "../db";
 
-export class Parent {
-	constructor(
-		public id: number,
-		public cypherLabel: string,
-		public relationName: string
-	) {}
-}
-
-export abstract class BaseEntity {
+export abstract class BaseEntity<S = void> {
 	id: number;
 
-	static readonly CYPHER_LABEL = this.constructor.name;
-
-	isMissingFromDatabase(): AsyncSubject<boolean> {
-		const subject = new AsyncSubject<boolean>();
-		DbConnection.run(
-			`MATCH (m:${BaseEntity.CYPHER_LABEL} { id: $id }) RETURN m`,
-			{ id: this.id }
-		)
-			.pipe(isEmpty())
-			.subscribe(subject);
-		return subject;
+	static get CYPHER_LABEL(): string {
+		return this.name;
 	}
 
-	abstract save(): Observable<this>;
-
-	saveRelatedTo() {
-		if (!this.parent) return of(this);
-
-		return DbConnection.run(
-			`MATCH (p:${this.parent.cypherLabel} { id: $parentId })
-			MERGE (m:Mod { id: $id })
-			MERGE (p)-[:${this.parent.relationName}]->(m)`,
-			{ id: this.id, parentId: this.parent.id }
-		).pipe(endWith(this), last()) as Observable<this>;
+	// allow access to static prop from instance
+	get CYPHER_LABEL(): string {
+		// @ts-ignore
+		return this.constructor.CYPHER_LABEL;
 	}
 
-	constructor(d: Record<string, unknown>, public readonly parent?: Parent) {
-		Object.assign(this, d);
+	static get uniqueConstraints(): [string, string][] {
+		if (this.CYPHER_LABEL === BaseEntity.name)
+			throw new Error("Cannot call uniqueConstraints on BaseEntity");
+		return [[`v:${this.CYPHER_LABEL}`, "v.id"]];
+	}
+
+	get primitiveThis(): Partial<this> {
+		const partial: Partial<this> = { ...this };
+		// delete all non-primitive properties
+		for (const key of Object.keys(partial) as (keyof this)[])
+			if (typeof partial[key] === "object") delete partial[key];
+		return partial;
+	}
+
+	protected buildQuery(relatedData: S): Query[] | Query {
+		return [];
+	}
+
+	save(relatedData: S) {
+		const qs = this.buildQuery(relatedData);
+		const queries = Array.isArray(qs) ? qs : [qs];
+		return DbConnection.runAll(from(queries)).pipe(final(this));
+	}
+
+	constructor(d: Record<string, unknown>) {
+		this.id = d.id as number;
 	}
 }
-
-type ClassType<T> = new (...args: any[]) => T;
-
-export const processEntity = <T extends BaseEntity>(
-	classRef: ClassType<T>
-): OperatorFunction<
-	Record<string, unknown> | readonly [Parent, Record<string, unknown>],
-	T
-> =>
-	pipe(
-		map((x) => {
-			const r = Array.isArray(x) ? x : [undefined, x];
-			return r as [Parent, Record<string, unknown>];
-		}),
-		map(
-			([parent, data]: readonly [
-				Parent | undefined,
-				Record<string, unknown>
-			]) => {
-				const r = new classRef(data, parent) as T;
-				Object.assign(r, data);
-				console.log(r);
-				console.log(classRef);
-				return r;
-			}
-		),
-		// tap(x => x),
-		// tap((x) => console.log(x.constructor.name, x.i)),
-		mergeMap((child) => child.saveRelatedTo()),
-		take(1), // TEMPORARY
-		filterAsync((child) => child.isMissingFromDatabase()),
-		mergeMap((child) => child.save())
-	);

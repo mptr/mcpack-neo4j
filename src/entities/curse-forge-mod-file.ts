@@ -1,10 +1,11 @@
-import { Observable, of } from "rxjs";
 import { curseforgeApiUrl } from "../util";
-import { BaseEntity, Parent } from "./base";
+import { BaseEntity } from "./base";
+import { CurseForgeMod } from "./curse-forge-mod";
+import { Query } from "../db";
 
-export class CurseForgeModFile extends BaseEntity {
-	static urlPaginator = (mod: Parent, i: number) =>
-		`${curseforgeApiUrl}${mod.id}/files?index=${i}`;
+export class CurseForgeModFile extends BaseEntity<CurseForgeMod> {
+	static urlPaginator = (mod: CurseForgeMod, i: number) =>
+		`${curseforgeApiUrl}${mod.id}/files?pageIndex=${i}`;
 
 	dateCreated: string;
 	dateModified: string;
@@ -28,7 +29,18 @@ export class CurseForgeModFile extends BaseEntity {
 	isEarlyAccessContent: boolean;
 	isCompatibleWithClient: boolean;
 
-	override save(): Observable<this> {
-		return of(this);
+	constructor(d: Record<string, unknown>) {
+		super(d);
+		Object.assign(this, d);
+	}
+
+	protected override buildQuery(relatedData: CurseForgeMod) {
+		return new Query(
+			`MATCH (p:${relatedData.CYPHER_LABEL} { id: $parentId })
+			MERGE (f:${this.CYPHER_LABEL} { id: $id })
+			MERGE (p)-[:HAS]->(f)
+			SET f += $partial`,
+			{ parentId: relatedData.id, id: this.id, partial: this.primitiveThis },
+		);
 	}
 }

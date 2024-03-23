@@ -1,11 +1,22 @@
-import { Observable, endWith, last } from "rxjs";
-import { DbConnection } from "../main";
-import { BaseEntity, Parent } from "./base";
+import { BaseEntity } from "./base";
 import { curseforgeApiUrl } from "../util";
+import { CurseForgePack } from "./curse-forge-pack";
+import { DbConnection } from "../main";
+import { map, reduce } from "rxjs";
+import { Query } from "../db";
 
-export class CurseForgeMod extends BaseEntity {
-	static urlPaginator = (pack: Parent, i: number) =>
+export class CurseForgeMod extends BaseEntity<CurseForgePack> {
+	static urlPaginator = (pack: CurseForgePack, i: number) =>
 		`${curseforgeApiUrl}${pack.id}/dependencies?index=${i}`;
+
+	static presentModIds() {
+		return DbConnection.run(
+			new Query(`MATCH (m:${this.CYPHER_LABEL}) RETURN m.id`),
+		).pipe(
+			map((x) => x.get("m.id")),
+			reduce((acc, value) => acc.add(value), new Set<number>()),
+		);
+	}
 
 	name: string;
 	authorName: string;
@@ -26,80 +37,18 @@ export class CurseForgeMod extends BaseEntity {
 	type: string;
 	slug: string;
 
-	override save() {
-		const partial: Partial<this> = { ...this };
+	constructor(d: Record<string, unknown>) {
+		super(d);
+		Object.assign(this, d);
+	}
 
-		delete partial.categoryClass;
-
-		return DbConnection.run(
-			`MERGE (m:Mod { id: $id })
+	protected override buildQuery(relatedData: CurseForgePack) {
+		return new Query(
+			`MATCH (p:${relatedData.CYPHER_LABEL} { id: $parentId })
+			MERGE (m:${this.CYPHER_LABEL} { id: $id })
+			MERGE (p)-[:CONTAINS]->(m)
 			SET m += $partial`,
-			{ entity: this, partial }
-		).pipe(endWith(this), last()) as Observable<this>;
+			{ parentId: relatedData.id, id: this.id, partial: this.primitiveThis },
+		);
 	}
 }
-
-// class CurseForgeModWithMeta {
-// 	mod: CurseForgeMod;
-// 	categories: CurseForgeCategory[];
-// 	files: CurseForgeModFile[];
-
-// save(s: GraphDbSession): GraphDbSession {
-// 	const partial: Partial<CurseForgeModWithMeta> = { ...this };
-// 	delete partial.categoryClass;
-// 	delete partial.categories;
-// 	delete partial.files;
-// 	s = s.run(
-// 		`MERGE (m:Mod { id: $entity.id })
-// 		SET m += $partial`,
-// 		{ entity: this, partial }
-// 	);
-// 	for (const category of this.categories)
-// 		s = s.run(
-// 			`MATCH (m:Mod { id: $entity.id })
-// 			MERGE (c:ModCategory { id: $category.id })
-// 			SET c += $category
-// 			MERGE (m)-[:BELONGS_TO]->(c)`,
-// 			{ entity: this, category }
-// 		);
-// 	for (const file of this.files) {
-// 		const partialFile: Partial<CurseForgeModFile> = { ...file };
-// 		delete partialFile.user;
-// 		delete partialFile.gameVersionTypeIds;
-// 		delete partialFile.gameVersions;
-// 		s.run(
-// 			`MATCH (m:Mod { id: $entity.id })
-// 			MERGE (f:File {id: $file.id })
-// 			SET f += $file
-// 			MERGE (m)-[:HAS]->(f)`,
-// 			{ entity: this, file: partialFile }
-// 		);
-// 		for (const version of file.gameVersions)
-// 			s.run(
-// 				`MATCH (f:File { id: $file.id })
-// 				MERGE (v:Version { name: $version })
-// 				MERGE (f)-[:FOR_VERSION]->(v)`,
-// 				{ file: partialFile, version }
-// 			);
-// 	}
-// 	return s;
-// }
-// }
-
-// const enrichMod = async (
-// 	mod: CurseForgeMod
-// ): Promise<CurseForgeModWithMeta> => {
-// 	const files = collectPagination<CurseForgeModFile>(
-// 		(page) =>
-// 			`${curseforgeApiUrl}${mod.id}/files?pageIndex=${page}&pageSize=50&sort=dateCreated&sortDescending=true`
-// 	);
-// 	const categories = getCategoriesFor(`${mod.categoryClass.slug}/${mod.slug}`);
-
-// 	const result = new CurseForgeModWithMeta();
-// 	Object.assign(result, {
-// 		...mod,
-// 		files: await files,
-// 		categories: await categories,
-// 	});
-// 	return result;
-// };

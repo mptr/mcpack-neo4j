@@ -2,18 +2,23 @@ import {
 	MonoTypeOperatorFunction,
 	Observable,
 	UnaryFunction,
+	concat,
 	concatMap,
-	filter,
+	endWith,
 	from,
+	ignoreElements,
 	interval,
+	last,
 	map,
 	mergeMap,
 	pipe,
+	retry,
 	takeWhile,
+	tap,
 } from "rxjs";
-import { Parent } from "./entities/base";
 
 export const curseforgeApiUrl = "https://www.curseforge.com/api/v1/mods/";
+// export const curseForgeRateLimiter = sharedRateLimiterFactory(100, 1);
 
 type ApiResponse<T = unknown> = {
 	data: T[];
@@ -25,42 +30,59 @@ type ApiResponse<T = unknown> = {
 };
 
 export const collectPagination = <T = Record<string, unknown>>(
-	indexableUrl: (n: number) => string
+	indexableUrl: (n: number) => string,
 ): UnaryFunction<Observable<number>, Observable<T>> =>
 	pipe(
 		map((n: number) => indexableUrl(n)),
+		// curseForgeRateLimiter(),
 		concatMap((url: string) =>
-			from(fetch(url).then((res) => res.json() as Promise<ApiResponse<T>>))
+			from(
+				fetchRateLimited(url).then(
+					(res) => res.json() as Promise<ApiResponse<T>>,
+				),
+			).pipe(
+				retry({
+					count: 5,
+					delay: 15000,
+				}),
+			),
 		),
 		takeWhile((res) => res.data.length > 0, true),
-		mergeMap((res) => from(res.data))
+		mergeMap((res) => from(res.data)),
 	);
 
-export const collectAllPagination = <T = Record<string, unknown>>(
-	indexableUrl: (p: Parent, n: number) => string
+export const collectAllPagination = <Parent, T = Record<string, unknown>>(
+	indexableUrl: (p: Parent, n: number) => string,
+	whilePred: (elm: T) => boolean = () => true,
 ) =>
 	pipe(
 		mergeMap((p: Parent) =>
 			interval(0).pipe(
 				collectPagination<T>((i) => indexableUrl(p, i)),
-				map((d) => [p, d] as const) // keep track of pack id
-			)
-		)
+				takeWhile(whilePred),
+				map((d) => [p, d] as const), // keep track of pack id
+			),
+		),
 	);
 
-export const filterAsync = <T>(
-	predicate: (value: T) => Observable<boolean>
-): MonoTypeOperatorFunction<T> =>
-	pipe(
-		// Convert the predicate Promise<boolean> to an observable (which resolves the promise,
-		// Then combine the boolean result of the promise with the input data to a container object
-		concatMap((data: T) =>
-			predicate(data).pipe(
-				map((isValid) => ({ filterResult: isValid, entry: data }))
-			)
-		),
-		// Filter the container object synchronously for the value in each data container object
-		filter((data) => data.filterResult === true),
-		// remove the data container object from the observable chain
-		map((data) => data.entry)
-	);
+export const final = <T>(f: T) => {
+	return pipe(endWith(f), last()) as UnaryFunction<
+		Observable<unknown>,
+		Observable<T>
+	>;
+};
+
+export const fetchRateLimited = async (url: string) => {
+	console.log("\x1b[31mfetching\x1b[0m > ", `\x1b[32m${url}\x1b[0m`);
+	return fetch(url);
+};
+
+/**
+ * Wait for another observable to complete before emitting the first element in the source observable.
+ */
+export const waitForOtherComplete = <T>(
+	other: Observable<unknown>,
+): MonoTypeOperatorFunction<T> => {
+	return (source: Observable<T>) =>
+		concat(other.pipe(ignoreElements()), source);
+};
