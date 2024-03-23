@@ -1,16 +1,6 @@
-import {
-	Observable,
-	UnaryFunction,
-	from,
-	map,
-	mergeMap,
-	pipe,
-	retry,
-	tap,
-} from "rxjs";
+import { Observable, from, map, mergeMap, of, retry } from "rxjs";
 import { BaseEntity } from "./base";
 import { Query } from "../db";
-import { fetchRateLimited } from "../util";
 
 type ICategorizable = {
 	CYPHER_LABEL: string;
@@ -48,27 +38,17 @@ export class CurseForgeCategory extends BaseEntity<ICategorizable> {
 }
 
 export const getCategories = <T extends ICategorizable>(
+	item: T,
 	typedSlugExtractor: (item: T) => string,
-): UnaryFunction<
-	Observable<T>,
-	Observable<readonly [T, Record<string, unknown>]>
-> => {
-	return pipe(
-		map(
-			(item: T) =>
-				[
-					item,
-					`https://www.curseforge.com/minecraft/${typedSlugExtractor(item)}`,
-				] as const,
+): Observable<Record<string, unknown>> => {
+	const url = `https://www.curseforge.com/minecraft/${typedSlugExtractor(item)}`;
+	return of(url).pipe(
+		mergeMap((url) =>
+			from(fetch(url).then(async (res) => [await res.text()] as const)).pipe(
+				retry({ count: 3, delay: 1000 }),
+			),
 		),
-		mergeMap(([item, url]) =>
-			from(
-				fetchRateLimited(url).then(
-					async (res) => [item, await res.text()] as const,
-				),
-			).pipe(retry({ count: 3, delay: 1000 })),
-		),
-		map(([item, txt]) => {
+		map(([txt]) => {
 			let data;
 			try {
 				const result = txt
@@ -92,7 +72,7 @@ export const getCategories = <T extends ICategorizable>(
 			const cs: Record<string, unknown>[] =
 				data.props.pageProps.project.categories;
 
-			return cs.map((categoryData) => [item, categoryData] as const);
+			return cs;
 		}),
 		mergeMap((x) => x),
 	);

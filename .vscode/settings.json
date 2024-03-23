@@ -9,5 +9,8 @@
         "**/.DS_Store": true,
         "**/Thumbs.db": true,
         "node_modules": true,
+    },
+    "[rust]": {
+        "editor.defaultFormatter": "rust-lang.rust-analyzer"
     }
 }

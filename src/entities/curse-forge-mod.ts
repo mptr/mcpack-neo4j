@@ -2,20 +2,32 @@ import { BaseEntity } from "./base";
 import { curseforgeApiUrl } from "../util";
 import { CurseForgePack } from "./curse-forge-pack";
 import { DbConnection } from "../main";
-import { map, reduce } from "rxjs";
 import { Query } from "../db";
 
 export class CurseForgeMod extends BaseEntity<CurseForgePack> {
 	static urlPaginator = (pack: CurseForgePack, i: number) =>
 		`${curseforgeApiUrl}${pack.id}/dependencies?index=${i}`;
 
-	static presentModIds() {
-		return DbConnection.run(
-			new Query(`MATCH (m:${this.CYPHER_LABEL}) RETURN m.id`),
-		).pipe(
-			map((x) => x.get("m.id")),
-			reduce((acc, value) => acc.add(value), new Set<number>()),
+	static async presentModIds() {
+		const s = DbConnection.getSession();
+		const mods = await s
+			.run(
+				new Query(`MATCH (m:${this.CYPHER_LABEL} { done: true }) RETURN m.id`),
+			)
+			.then((r) => r.map((x) => x.get("m.id")));
+		await s.close();
+		return mods.reduce((acc, value) => acc.add(value), new Set<number>());
+	}
+
+	async markDone() {
+		const s = DbConnection.getSession();
+		await s.run(
+			new Query(
+				`MATCH (m:${this.CYPHER_LABEL} { id: $id }) SET m.done = true`,
+				{ id: this.id },
+			),
 		);
+		await s.close();
 	}
 
 	name: string;

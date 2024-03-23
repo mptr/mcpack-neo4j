@@ -1,6 +1,4 @@
-import { from } from "rxjs";
 import { DbConnection } from "../main";
-import { final } from "../util";
 import { Query } from "../db";
 
 export abstract class BaseEntity<S = void> {
@@ -34,10 +32,13 @@ export abstract class BaseEntity<S = void> {
 		return [];
 	}
 
-	save(relatedData: S) {
+	async save(relatedData: S) {
+		const session = DbConnection.getSession();
 		const qs = this.buildQuery(relatedData);
 		const queries = Array.isArray(qs) ? qs : [qs];
-		return DbConnection.runAll(from(queries)).pipe(final(this));
+		await session.runAll(queries);
+		await session.close();
+		return this;
 	}
 
 	constructor(d: Record<string, unknown>) {

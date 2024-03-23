@@ -4,7 +4,6 @@
   },
   "main": "src/main.ts",
   "dependencies": {
-    "multi-progress-bars": "^5.0.3",
     "neo4j-driver": "^5.17.0",
     "prettier": "^3.2.5",
     "rxjs": "^7.8.1"

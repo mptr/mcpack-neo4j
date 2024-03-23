@@ -1,15 +1,4 @@
-import neo4j, { Driver } from "neo4j-driver";
-import {
-	from,
-	tap,
-	concat,
-	Observable,
-	concatMap,
-	finalize,
-	map,
-	of,
-	retry,
-} from "rxjs";
+import neo4j, { Driver, QueryResult, RecordShape, Session } from "neo4j-driver";
 
 export class Query {
 	constructor(
@@ -27,9 +16,9 @@ type StaticUniqueConstrained = {
 };
 
 export class GraphDB {
-	protected driver: Driver;
+	readonly driver: Driver;
 
-	private readonly entities: StaticUniqueConstrained[];
+	readonly entities: StaticUniqueConstrained[];
 
 	constructor(...entities: StaticUniqueConstrained[]) {
 		this.entities = entities;
@@ -43,48 +32,44 @@ export class GraphDB {
 		);
 	}
 
-	runAll(querySource: Observable<Query>) {
-		const session = this.driver.rxSession();
-		return querySource.pipe(
-			tap(({ query, params }) => {
-				const q = query
-					.split("\n")
-					.map((line) => line.trim())
-					// .join("\n           ")
-					.join(" ")
-					.replace(/;?$/g, ";");
-				// console.log("\x1b[30mrunning\x1b[0m  > ", `\x1b[34m${q}\x1b[0m`);
-			}),
-			map((query) => query.asArray),
-			concatMap((params) =>
-				session
-					.run(...params)
-					.records()
-					.pipe(retry({ count: 3, delay: 1000 })),
-			),
-			finalize(() => session.close()),
+	getSession() {
+		return new GraphDBSession(this);
+	}
+}
+
+export class GraphDBSession {
+	private readonly session: Session;
+	constructor(private readonly db: GraphDB) {
+		this.session = db.driver.session();
+	}
+
+	async runAll(querySource: Query[]) {
+		const tx = await this.session.beginTransaction();
+		const r = await Promise.all(
+			querySource.map((q) => tx.run(q.query, q.params).then((r) => r.records)),
 		);
+		await tx.commit();
+		return r;
 	}
 
-	run(...args: Query[]) {
-		return this.runAll(from(args));
+	run(args: Query): Promise<QueryResult<RecordShape>["records"]>;
+	run(...args: Query[]): Promise<void>;
+	run(...args: Query[]): Promise<void | QueryResult<RecordShape>["records"]> {
+		const r = this.runAll(args);
+		if (args.length === 1) return r.then((r) => r[0]);
+		else return r.then(() => {});
 	}
 
-	clear() {
-		const constraintDrops = this.run(
+	async clear() {
+		await this.run(new Query("MATCH (n) DETACH DELETE n"));
+		const dropConstraints = await this.run(
 			new Query("SHOW CONSTRAINT YIELD * RETURN name"),
-		).pipe(
-			map((result) => result.get("name") as string),
-			map((name) => new Query(`DROP CONSTRAINT ${name}`)),
-		);
-
-		return this.runAll(
-			concat(of(new Query("MATCH (n) DETACH DELETE n")), constraintDrops),
-		);
+		).then((r) => r.map((c) => new Query(`DROP CONSTRAINT ${c.get("name")}`)));
+		return this.runAll(dropConstraints);
 	}
 
 	applyConstraints() {
-		const queries = this.entities
+		const queries = this.db.entities
 			.map((cls) =>
 				cls.uniqueConstraints.map(
 					([obj, key], i) =>
@@ -99,8 +84,6 @@ export class GraphDB {
 	}
 
 	close() {
-		return new Observable<void>((subscriber) => {
-			this.driver.close().then(() => subscriber.complete());
-		});
+		return this.session.close();
 	}
 }
