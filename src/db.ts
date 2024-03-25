@@ -32,15 +32,18 @@ export class GraphDB {
 		);
 	}
 
-	getSession() {
-		return new GraphDBSession(this);
+	getSession(...sessionOptions: Parameters<Driver["session"]>) {
+		return new GraphDBSession(this, ...sessionOptions);
 	}
 }
 
 export class GraphDBSession {
 	private readonly session: Session;
-	constructor(private readonly db: GraphDB) {
-		this.session = db.driver.session();
+	constructor(
+		private readonly db: GraphDB,
+		...sessionOptions: Parameters<Driver["session"]>
+	) {
+		this.session = db.driver.session(...sessionOptions);
 	}
 
 	async runAll(querySource: Query[]) {

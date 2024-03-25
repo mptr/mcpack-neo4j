@@ -8,6 +8,28 @@ export abstract class BaseEntity<S = void> {
 		return this.name;
 	}
 
+	static async presentIds() {
+		const s = DbConnection.getSession({ defaultAccessMode: "READ" });
+		const mods = await s
+			.run(
+				new Query(`MATCH (m:${this.CYPHER_LABEL} { done: true }) RETURN m.id`),
+			)
+			.then((r) => r.map((x) => x.get("m.id")));
+		await s.close();
+		return mods.reduce((acc, value) => acc.add(value), new Set<number>());
+	}
+
+	async markDone() {
+		const s = DbConnection.getSession({ defaultAccessMode: "WRITE" });
+		await s.run(
+			new Query(
+				`MATCH (m:${this.CYPHER_LABEL} { id: $id }) SET m.done = true`,
+				{ id: this.id },
+			),
+		);
+		await s.close();
+	}
+
 	// allow access to static prop from instance
 	get CYPHER_LABEL(): string {
 		// @ts-ignore

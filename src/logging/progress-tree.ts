@@ -12,21 +12,30 @@ export class ProgressTree {
 
 	constructor(protected readonly name: string) {}
 
-	protected showInterval: Timer | null = null;
+	protected static showInterval: Timer | null = null;
 	show() {
-		if (this.showInterval) return;
-		this.showInterval = setInterval(() => {
-			console.clear();
-			console.log(this.toString());
-		}, 100);
+		if (ProgressTree.showInterval) return;
+		ProgressTree.showInterval = setInterval(() => {
+			process.stdout.cursorTo(0, 0);
+			process.stdout.clearScreenDown();
+			process.stdout.write(this.toString());
+		}, 500);
 	}
 	hide() {
-		if (this.showInterval) clearInterval(this.showInterval);
+		if (ProgressTree.showInterval) clearInterval(ProgressTree.showInterval);
 	}
 
-	addChildTask(pt: ProgressTree, done?: boolean): ProgressTree;
-	addChildTask(name: string, done?: boolean): ProgressTree;
-	addChildTask(pt: ProgressTree | string, done = false): ProgressTree {
+	addChildTask(
+		pt: ProgressTree,
+		done?: boolean,
+		render?: boolean,
+	): ProgressTree;
+	addChildTask(name: string, done?: boolean, render?: boolean): ProgressTree;
+	addChildTask(
+		pt: ProgressTree | string,
+		done = false,
+		render = true,
+	): ProgressTree {
 		const insert = pt instanceof ProgressTree ? pt : new ProgressTree(pt);
 		if (done) insert.done();
 		this.children.push(insert);
@@ -64,10 +73,14 @@ export class ProgressTree {
 		const m = this._meta ? ` (${blue(this._meta)})` : "";
 
 		return (
-			prefix + " " + counter + " " + (this._done ? grey : normal)(this.name) + m
+			prefix +
+			" " +
+			counter +
+			" " +
+			(this._done ? grey : normal)(this.name.substring(0, 40)) +
+			m
 		);
 	}
-
 	protected _toString(branch = "", result = ""): string {
 		const isGraphHead = branch.length === 0;
 		const cs = this._done ? [] : this.children;
@@ -88,18 +101,50 @@ export class ProgressTree {
 		const nextBranch = baseBranch + "├─";
 		const lastBranch = baseBranch + "└─";
 
-		return cs.reduce(
-			(acc, child, index) => {
-				return (
-					acc +
-					"\n" +
-					child._toString(
-						cs.length - 1 === index ? lastBranch : nextBranch,
-						result,
-					)
-				);
-			},
-			`${grey(branch + branchHead)}${this.nodeLabel}`,
-		);
+		const base = `${grey(branch + branchHead)}${this.nodeLabel}`;
+
+		let subtree = cs.reduce((acc, child, index) => {
+			return (
+				acc +
+				"\n" +
+				child._toString(
+					cs.length - 1 === index ? lastBranch : nextBranch,
+					result,
+				)
+			);
+		}, "");
+
+		if (cs.length > 20 && cs.every((c) => c.children.length === 0)) {
+			const COLUMN_COUNT = 6;
+
+			const items = subtree.trim().split("\n");
+			subtree = "";
+			// Calculate the number of words per column
+			const itemsPerColumn = Math.ceil(items.length / COLUMN_COUNT);
+			const columns: string[][] = Array.from(
+				{ length: COLUMN_COUNT },
+				() => [],
+			);
+
+			// Assign words to each column
+			items.forEach((item, index) => {
+				const columnIndex = Math.floor(index / itemsPerColumn);
+				columns[columnIndex].push(item);
+			});
+
+			// To print the columns
+			for (let i = 0; i < itemsPerColumn; i++) {
+				const row = columns
+					.map((column) => {
+						const c = column[i] || "";
+						const invisibleChars =
+							c.length - c.replace(/\x1B\[[0-9;]*m/g, "").length;
+						return c.padEnd(70 + invisibleChars, " ");
+					})
+					.join("");
+				subtree += "\n" + row;
+			}
+		}
+		return result + base + subtree;
 	}
 }

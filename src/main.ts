@@ -23,11 +23,10 @@ export const DbConnection = new GraphDB(
 	CurseForgeVersion,
 );
 
-const presentModIds = await CurseForgeMod.presentModIds();
+const presentPackIds = await CurseForgePack.presentIds();
+const presentModIds = await CurseForgeMod.presentIds();
 
 const main = async () => {
-	// stores the list of mods that are already present in the database
-
 	const progressTree = new ProgressTree("CurseForge");
 	progressTree.show();
 
@@ -51,6 +50,12 @@ const processPack = async (
 	p: Record<string, unknown>,
 	progressTree: ProgressTree,
 ) => {
+	if (presentPackIds.has(p.id)) {
+		const ct = progressTree.addChildTask(p.name + "", true);
+		ct.meta = "skipped";
+		return;
+	}
+
 	const pack = await new CurseForgePack(p).save();
 
 	const packTask = progressTree.addChildTask(pack.name);
@@ -68,6 +73,7 @@ const processPack = async (
 	).pipe(mergeMap((m) => processMod(m, pack, packTask)));
 	await lastValueFrom(modsProcessed);
 
+	await pack.markDone();
 	packTask.done();
 };
 
@@ -76,7 +82,7 @@ const processMod = async (
 	pack: CurseForgePack,
 	packTask: ProgressTree,
 ) => {
-	const modTask = packTask.addChildTask(m?.name + "");
+	const modTask = packTask.addChildTask(m.name + "");
 	const mod = await new CurseForgeMod(m).save(pack);
 
 	if (presentModIds.has(mod.id)) {
@@ -92,7 +98,7 @@ const processMod = async (
 		mergeMap((data) => new CurseForgeCategory(data).save(mod)),
 		tap(() => modTask.increaseTaskCounter()),
 	);
-	await lastValueFrom(categories);
+	await lastValueFrom(categories, { defaultValue: null });
 
 	const files = collectAllPagination(
 		mod,
