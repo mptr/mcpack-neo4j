@@ -1,4 +1,11 @@
-import neo4j, { Driver, QueryResult, RecordShape, Session } from "neo4j-driver";
+import {
+	Driver,
+	QueryResult,
+	RecordShape,
+	Session,
+	auth,
+	driver,
+} from "neo4j-driver";
 
 export class Query {
 	constructor(
@@ -22,9 +29,9 @@ export class GraphDB {
 
 	constructor(...entities: StaticUniqueConstrained[]) {
 		this.entities = entities;
-		this.driver = neo4j.driver(
+		this.driver = driver(
 			"bolt://localhost:7687",
-			neo4j.auth.basic("neo4j", "changeme"),
+			auth.basic("neo4j", "changeme"),
 			{
 				connectionAcquisitionTimeout: 10 * 60 * 1000, // 10 minutes
 				maxTransactionRetryTime: 10 * 60 * 1000, // 15 minutes
@@ -32,8 +39,8 @@ export class GraphDB {
 		);
 	}
 
-	getSession(...sessionOptions: Parameters<Driver["session"]>) {
-		return new GraphDBSession(this, ...sessionOptions);
+	getSession(sessionOptions?: Parameters<Driver["session"]>[0]) {
+		return new GraphDBSession(this, sessionOptions);
 	}
 }
 
@@ -41,18 +48,28 @@ export class GraphDBSession {
 	private readonly session: Session;
 	constructor(
 		private readonly db: GraphDB,
-		...sessionOptions: Parameters<Driver["session"]>
+		sessionOptions: Parameters<Driver["session"]>[0],
 	) {
-		this.session = db.driver.session(...sessionOptions);
+		this.session = db.driver.session(sessionOptions);
 	}
 
-	async runAll(querySource: Query[]) {
+	async runAll(
+		querySource: Query[],
+		retryCount = 5,
+	): Promise<QueryResult<RecordShape>["records"][]> {
 		const tx = await this.session.beginTransaction();
 		const r = await Promise.all(
 			querySource.map((q) => tx.run(q.query, q.params).then((r) => r.records)),
 		);
-		await tx.commit();
-		return r;
+		try {
+			await tx.commit();
+			return r;
+		} catch (e) {
+			console.log("retry transaction");
+			await tx.rollback();
+			if (retryCount <= 0) throw e;
+			return this.runAll(querySource, retryCount - 1);
+		}
 	}
 
 	run(args: Query): Promise<QueryResult<RecordShape>["records"]>;

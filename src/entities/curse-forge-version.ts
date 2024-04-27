@@ -18,7 +18,7 @@ export class CurseForgeVersion extends BaseEntity<IVersionSupportable> {
 
 	get labelSuffix() {
 		if (this.name.includes("Java")) return null;
-		if (this.name.match(/\d+\d+.*/)) return "Mc";
+		if (this.name.match(/\d+\.\d+.*/)) return "Mc";
 		return "Loader";
 	}
 

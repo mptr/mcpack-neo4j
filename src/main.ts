@@ -31,10 +31,10 @@ const main = async () => {
 	progressTree.show();
 
 	const packs = concat(
-		range(1, 1).pipe(
+		range(1, 4).pipe(
 			collectPagination(
 				(i) =>
-					`${curseforgeApiUrl}search?gameId=432&index=${i}&classId=4471&pageSize=50&sortField=2`,
+					`${curseforgeApiUrl}search?index=${i}&gameId=432&classId=4471&gameVersion=1.20&pageSize=50&sortField=1`,
 			),
 		),
 	);
@@ -43,7 +43,12 @@ const main = async () => {
 		// do mergeMap to process each pack concurrently
 		concatMap((p) => processPack(p, progressTree)),
 	);
-	await lastValueFrom(packsProcessed);
+	await lastValueFrom(packsProcessed).catch((e) => {
+		console.error("No packs in sequence");
+		throw e;
+	});
+
+	progressTree.hide();
 };
 
 const processPack = async (
@@ -54,7 +59,7 @@ const processPack = async (
 		const ct = progressTree.addChildTask(p.name + "", true);
 		ct.meta = "skipped";
 		return;
-	}
+	} else presentPackIds.add(p.id);
 
 	const pack = await new CurseForgePack(p).save();
 
@@ -71,7 +76,7 @@ const processPack = async (
 		pack,
 		CurseForgeMod.urlPaginator,
 	).pipe(mergeMap((m) => processMod(m, pack, packTask)));
-	await lastValueFrom(modsProcessed);
+	await lastValueFrom(modsProcessed, { defaultValue: null });
 
 	await pack.markDone();
 	packTask.done();
@@ -89,7 +94,7 @@ const processMod = async (
 		modTask.meta = "skipped";
 		modTask.done();
 		return;
-	}
+	} else presentModIds.add(mod.id);
 
 	const categories = getCategories(
 		mod,
@@ -98,7 +103,10 @@ const processMod = async (
 		mergeMap((data) => new CurseForgeCategory(data).save(mod)),
 		tap(() => modTask.increaseTaskCounter()),
 	);
-	await lastValueFrom(categories, { defaultValue: null });
+	await lastValueFrom(categories, { defaultValue: null }).catch((e) => {
+		console.error("No categories in sequence");
+		throw e;
+	});
 
 	const files = collectAllPagination(
 		mod,
@@ -116,7 +124,10 @@ const processMod = async (
 				modTask.increaseTaskCounter();
 			}),
 		);
-	await lastValueFrom(files, { defaultValue: null });
+	await lastValueFrom(files, { defaultValue: null }).catch((e) => {
+		console.error("No files in sequence");
+		throw e;
+	});
 
 	await mod.markDone();
 
@@ -124,8 +135,8 @@ const processMod = async (
 };
 
 const mgmtSession = DbConnection.getSession();
-// await mgmtSession.clear();
-// await mgmtSession.applyConstraints();
+await mgmtSession.clear();
+await mgmtSession.applyConstraints();
 await main();
 await mgmtSession.close();
 await DbConnection.driver.close();
